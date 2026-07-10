@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 12px/1.4 system-ui, sans-serif;
+    background: #141414; color: #e8e8e8; height: 100vh; overflow: hidden;
+  }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+  #tabs { display: flex; background: #0e0e0e; border-bottom: 1px solid #2a2a2a; }
+  .tab {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: #999; padding: 8px 16px; cursor: pointer; font-size: 12px;
+  }
+  .tab.active { color: #E84430; border-bottom-color: #E84430; }
+  .view { display: none; flex-direction: column; flex: 1; min-height: 0; }
+  .view.active { display: flex; }
+  #toolbar {
+    display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    padding: 6px 8px; background: #1c1c1c; border-bottom: 1px solid #2a2a2a;
+  }
+  button {
+    background: #2a2a2a; color: #e8e8e8; border: 1px solid #3a3a3a;
+    border-radius: 4px; padding: 4px 9px; cursor: pointer; font-size: 12px;
+  }
+  button:hover { background: #333; }
+  button.accent { background: #E84430; border-color: #E84430; color: #fff; }
+  button.accent:hover { background: #ff5842; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  input[type=text], textarea, select {
+    background: #0e0e0e; color: #e8e8e8; border: 1px solid #333;
+    border-radius: 4px; padding: 4px 6px; font: inherit; font-family: ui-monospace, monospace;
+  }
+  label.chk { display: flex; align-items: center; gap: 4px; user-select: none; cursor: pointer; }
+  #filter { flex: 1; min-width: 120px; }
+  #main { display: flex; flex: 1; min-height: 0; }
+  #list { width: 42%; overflow-y: auto; border-right: 1px solid #2a2a2a; }
+  #detail { flex: 1; overflow-y: auto; padding: 8px; }
+  .row {
+    padding: 5px 8px; border-bottom: 1px solid #202020; cursor: pointer;
+    display: flex; gap: 6px; align-items: baseline; white-space: nowrap;
+  }
+  .row:hover { background: #1e1e1e; }
+  .row.sel { background: #2a1512; border-left: 2px solid #E84430; }
+  .method { font-weight: 700; width: 42px; flex-shrink: 0; }
+  .m-GET { color: #6fb3ff; } .m-POST { color: #7ee081; }
+  .m-PUT, .m-PATCH { color: #ffd166; } .m-DELETE { color: #ff6b6b; }
+  .status { width: 28px; flex-shrink: 0; color: #888; }
+  .path { overflow: hidden; text-overflow: ellipsis; }
+  .gqlop { color: #ff9d8a; font-style: italic; }
+  h3 { margin: 10px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: #999; }
+  pre { background: #0e0e0e; border: 1px solid #262626; border-radius: 4px; padding: 8px; overflow: auto; max-height: 240px; margin: 0; white-space: pre-wrap; word-break: break-word; }
+  textarea { width: 100%; resize: vertical; }
+  .field { margin-bottom: 6px; }
+  .field label { display: block; color: #999; margin-bottom: 2px; }
+  .replaybar { display: flex; gap: 6px; margin: 6px 0; align-items: center; flex-wrap: wrap; }
+  .replaybar input { flex: 1; }
+  .muted { color: #777; }
+  .count { color: #E84430; font-weight: 700; }
+  .empty { padding: 20px; color: #666; text-align: center; }
+  .warn { background: #2a1512; border: 1px solid #E84430; border-radius: 4px; padding: 6px 8px; color: #ffb3a6; margin-bottom: 8px; }
+
+  /* Scripts view */
+  #scripts-main { display: flex; flex: 1; min-height: 0; }
+  #lib { width: 30%; overflow-y: auto; border-right: 1px solid #2a2a2a; padding: 6px; }
+  #lib .libitem { padding: 6px 8px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
+  #lib .libitem:hover { background: #1e1e1e; }
+  #lib .libitem.sel { background: #2a1512; border-color: #E84430; }
+  #editor { flex: 1; overflow-y: auto; padding: 8px; }
+  #editor textarea.code { font-size: 12px; }
+  .params-row { display: flex; gap: 6px; margin-bottom: 4px; }
+  .params-row input { flex: 1; }
+  #log { max-height: 320px; }
+  .gate { background: #2a2410; border: 1px solid #ffd166; border-radius: 4px; padding: 6px 8px; margin: 6px 0; color: #ffe4a1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="tabs">
+    <button class="tab active" data-view="view-capture">Capture</button>
+    <button class="tab" data-view="view-scripts">Scripts</button>
+  </div>
+
+  <div id="view-capture" class="view active">
+    <div id="toolbar">
+      <button id="clear">Clear</button>
+      <label class="chk"><input type="checkbox" id="onlyJson" checked> JSON/GraphQL only</label>
+      <input type="text" id="filter" placeholder="filter url / operation…">
+      <span class="muted"><span class="count" id="count">0</span> captured</span>
+      <button id="copyAll">Copy for Claude</button>
+      <button id="saveAll">Save JSON</button>
+      <button id="introspect" class="accent">Introspect GraphQL</button>
+    </div>
+    <div id="main">
+      <div id="list"><div class="empty">Reload the target page with this panel open to capture traffic.</div></div>
+      <div id="detail"><div class="empty">Select a request.</div></div>
+    </div>
+  </div>
+
+  <div id="view-scripts" class="view">
+    <div id="scripts-main">
+      <div id="lib">
+        <button id="new-script" class="accent" style="width:100%;margin-bottom:6px;">+ New script</button>
+        <div id="lib-list"></div>
+      </div>
+      <div id="editor">
+        <div class="field"><label>Name</label><input type="text" id="s-name" placeholder="untitled"></div>
+
+        <h3>Parameters</h3>
+        <div class="muted" style="margin-bottom:4px;">Passed to the script as <code>recon.params</code>. Keep IDs out of code; resolve by name at runtime.</div>
+        <div id="params-rows"></div>
+        <button id="add-param">+ param</button>
+
+        <h3>Script</h3>
+        <div class="muted" style="margin-bottom:4px;">Runs in the page's session. Helpers: <code>recon.gql</code>, <code>recon.json</code>, <code>recon.csrf</code>, <code>recon.resolveByName</code>, <code>recon.log</code>, <code>recon.params</code>. <code>await</code> is available.</div>
+        <textarea id="s-code" class="code" rows="12" placeholder="// example:
+const groups = await recon.gql('/graphql', `{ groups(all:true){ nodes{ id displayName } } }`);
+recon.log('groups', groups.data.groups.nodes.length);"></textarea>
+
+        <div id="gate-box"></div>
+
+        <div class="replaybar">
+          <button id="s-run" class="accent">Run</button>
+          <button id="s-save">Save</button>
+          <button id="s-delete">Delete</button>
+          <button id="s-bundle">Bundle context for Claude</button>
+        </div>
+
+        <h3>Run log</h3>
+        <pre id="log"><span class="muted">— not run —</span></pre>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="panel.js"></script>
+</body>
+</html>
