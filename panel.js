@@ -862,7 +862,84 @@ function renderDigest() {
   if (out && digest.totalRequests) out.textContent = buildDigest();
 }
 
-/* ---------- auto-save (debounced, off Downloads) ---------- */
+/* ---------- save target: chosen folder (File System Access) or Downloads ---------- */
+let dirHandle = null;
+
+function idbOpen() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open("recon", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbSet(k, v) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const t = db.transaction("kv", "readwrite");
+    t.objectStore("kv").put(v, k);
+    t.oncomplete = () => res();
+    t.onerror = () => rej(t.error);
+  });
+}
+async function idbGet(k) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const t = db.transaction("kv", "readonly");
+    const rq = t.objectStore("kv").get(k);
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error);
+  });
+}
+
+function setFolderLabel(text) {
+  const el = $("#dg-folder");
+  if (el) el.textContent = text;
+}
+
+async function dirReady(canPrompt) {
+  if (!dirHandle) return false;
+  const opts = { mode: "readwrite" };
+  try {
+    if ((await dirHandle.queryPermission(opts)) === "granted") return true;
+    if (canPrompt && (await dirHandle.requestPermission(opts)) === "granted") return true;
+  } catch { /* handle stale */ }
+  return false;
+}
+
+async function pickSaveDir() {
+  if (!window.showDirectoryPicker) { alert("This browser build has no folder picker. Files will go to Downloads."); return; }
+  try {
+    const h = await window.showDirectoryPicker({ mode: "readwrite", id: "recon-digest" });
+    dirHandle = h;
+    await idbSet("dirHandle", h);
+    await chrome.storage.local.set({ recon_dir_name: h.name });
+    setFolderLabel("Folder: " + h.name);
+  } catch (e) {
+    if (e && e.name !== "AbortError") alert("Folder pick failed: " + e);
+  }
+}
+
+// Write text to the chosen folder if usable; else fall back to a Downloads blob.
+// overwrite=true reuses a stable filename (auto-save); else timestamps (manual snapshot).
+async function writeDigestFile(text, overwrite, btn) {
+  const base = digestBase();
+  if (await dirReady(!overwrite)) {   // only prompt for permission on a user-gesture (manual) save
+    const name = overwrite ? base + ".md" : base + "-" + new Date().toISOString().replace(/[:.]/g, "-") + ".md";
+    try {
+      const fh = await dirHandle.getFileHandle(name, { create: true });
+      const w = await fh.createWritable();
+      await w.write(text);
+      await w.close();
+      if (btn) { const t = btn.textContent; btn.textContent = "saved → " + dirHandle.name; setTimeout(() => (btn.textContent = t), 1500); }
+      return;
+    } catch (e) { /* fall through to Downloads */ }
+  }
+  downloadText(text, base, "md", "text/markdown");
+  if (btn) { const t = btn.textContent; btn.textContent = "saved → Downloads"; setTimeout(() => (btn.textContent = t), 1500); }
+}
+
+/* ---------- auto-save (opt-in, debounced, overwrites one file) ---------- */
 let lastAutoSaveCount = 0, lastAutoSaveTs = 0;
 function maybeAutoSave() {
   const cb = $("#dg-autosave");
@@ -871,13 +948,24 @@ function maybeAutoSave() {
   if (digest.totalRequests - lastAutoSaveCount >= 150 && now - lastAutoSaveTs >= 60000) {
     lastAutoSaveCount = digest.totalRequests;
     lastAutoSaveTs = now;
-    downloadText(buildDigest(), digestBase(), "md", "text/markdown");
+    writeDigestFile(buildDigest(), true);
   }
 }
 
 /* ---------- digest view bindings ---------- */
 $("#dg-copy").onclick = () => copyOrSave(buildDigest(), $("#dg-copy"), digestBase(), "md", "text/markdown");
-$("#dg-save").onclick = () => downloadText(buildDigest(), digestBase(), "md", "text/markdown");
+$("#dg-save").onclick = () => writeDigestFile(buildDigest(), false, $("#dg-save"));
+$("#dg-folder-btn").onclick = () => pickSaveDir();
+(async () => {
+  try {
+    const h = await idbGet("dirHandle");
+    if (h) {
+      dirHandle = h;
+      const r = await chrome.storage.local.get("recon_dir_name");
+      setFolderLabel("Folder: " + (r.recon_dir_name || h.name) + " (re-grant on first save)");
+    }
+  } catch { /* no saved handle */ }
+})();
 $("#dg-clear").onclick = () => {
   digest = newDigest();
   entries.length = 0;
