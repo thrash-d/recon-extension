@@ -1,8 +1,9 @@
 # Recon Console (Chrome/Brave extension)
 
-Session-riding recon and scripted automation for authorized security testing and admin-console work. It turns the DevTools-console-paste workflow into a DevTools panel with two tabs:
+Session-riding recon and scripted automation for authorized security testing and admin-console work. It turns the DevTools-console-paste workflow into a DevTools panel with three tabs:
 
 - **Capture**: grab the site's own API traffic, run GraphQL introspection, and replay or tamper requests inside the page's real session.
+- **Digest**: passive. Just browse — every request folds into a deduped attack-surface map (endpoint templates with IDs collapsed, observed params, IDOR/JWT/secret/PII flags, missing security headers, GraphQL ops). This is the AI-ready paste: a few KB of pure signal instead of MB of bodies, so it never crashes a chat.
 - **Scripts**: describe a task, let Claude write it, paste it in, and run it in-session, with saved and parameterized scripts plus a write-gate. No stored creds, no console copy-paste.
 
 ## Why a panel beats console paste
@@ -20,7 +21,16 @@ Session-riding recon and scripted automation for authorized security testing and
 
 No icons are bundled; the extension loads fine without them.
 
-## Use
+## Digest (start here — the passive path)
+
+1. Open the Recon panel on your authorized target and switch to the **Digest** tab. That's the only setup.
+2. Browse the site normally. The counter (`N reqs · M endpoints`) ticks up and the digest rebuilds live. No clicking rows, no toggles.
+3. When you've covered the surface you care about, hit **Copy digest for Claude** and paste. The digest carries its own analysis preamble, so Claude ranks IDOR/BOLA, broken-auth, data-exposure, CORS, and missing-header candidates straight from it.
+4. **auto-save to file** (on by default) drops a timestamped `recon-digest-<host>.md` into Downloads every ~150 requests, so a fresh recon file exists even if you never click. **Clear** resets the digest and the raw buffer.
+
+Why it can't crash a paste: the digest is signal only. Endpoints are deduped and their IDs collapsed to `:id`/`:uuid`, response bodies are scanned for flags but never included, and every set is capped. A 3,000-request browse of a noisy app lands around a few KB. Bodies stay in the **Capture** tab for drill-down when Claude asks to see one.
+
+## Use (Capture — manual drill-down)
 
 1. Open the Recon panel, then reload or interact with the target page. Requests stream into the left list, and GraphQL ops show their operation name in orange.
 2. Click a request to see request/response, plus auto-flagged auth headers (`X-CSRF-Token`, `Authorization`, `Content-Type`).
@@ -53,6 +63,11 @@ Replay executes real authenticated requests against whatever origin you point it
 
 ## Known limits / next
 
+- **Digest is the crash-safe paste; raw exports are not.** Prefer Copy digest for Claude. The old Capture-tab "Copy for Claude" (raw requests) is still capped, but Save JSON is unbounded — feed that as a file, never a paste.
+- Digest templating collapses numeric, UUID, long-hex, and opaque-token path segments to placeholders. A pathological ID scheme can over- or under-collapse; check the Attack surface list looks right.
+- Digest signal flags record presence + location only, with the value redacted. They can false-positive (an email regex fires on any address). Confirm in the raw body via Capture before reporting.
+- JWT decode reads header + payload claims only (never verifies or stores the signature). `alg` and claim keys are the recon value.
+- auto-save writes to the browser's Downloads folder with a timestamped name; Chrome can't overwrite, so long sessions accumulate files. Turn it off if that's noise.
 - Exports cap each request/response body at 4,000 chars (truncated bodies show `_truncated` plus a char count). Replay responses cap at ~200KB in the panel view.
 - Every clipboard path is gated. Copy for Claude, Bundle context, and the per-request "Copy this request for Claude" all route through the ~300KB clipboard gate; anything larger auto-saves a `.json` file instead. On top of that, Copy for Claude caps the aggregate to the most-recent 200 requests / ~250KB (flagged with `capped` and `cappedNote`), so a normal copy is always paste-safe. Noisy APIs like YouTube's innertube hit this fast.
 - Save JSON is the full, unbounded export, deliberately not capped. Don't open it and paste the contents into a chat; multi-MB JSON crashes it. Feed the saved file to Claude as a file, not a paste.

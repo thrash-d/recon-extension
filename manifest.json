@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Recon Console",
-  "version": "0.2.2",
-  "description": "Session-riding traffic capture, GraphQL introspection, request replay, and scripted automation for authorized security testing and admin-console work.",
+  "version": "0.3.0",
+  "description": "Passive recon digest, session-riding traffic capture, GraphQL introspection, request replay, and scripted automation for authorized security testing and admin-console work.",
   "devtools_page": "devtools.html",
   "permissions": ["clipboardWrite", "storage"],
   "minimum_chrome_version": "116"

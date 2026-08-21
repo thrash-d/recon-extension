@@ -3,8 +3,16 @@
 Work top to bottom. Each phase proves one thing. Use a site **you're logged into and authorized on** (your own account or an admin console you run). Read-only until Phase 5.
 
 ## Phase 0 — load (1 min)
-1. `brave://extensions` → Developer mode on → **Load unpacked** → pick this folder. (If already loaded, hit the reload ↻ — version is 0.2.1.)
+1. `brave://extensions` → Developer mode on → **Load unpacked** → pick this folder. (If already loaded, hit the reload ↻ — version is 0.3.0.)
 2. Open a logged-in SPA, F12 → **Recon** panel.
+
+## Phase 0.5 — passive digest (the main path)
+1. Switch to the **Digest** tab. Browse the target normally for a minute — click around, load a few views.
+2. The `N reqs · M endpoints` counter should climb and the digest text should rebuild on its own. No row-clicking.
+3. Confirm the Attack surface list shows deduped endpoints with IDs collapsed to `:id`/`:uuid`, id-bearing rows marked `*`, and that Auth surface / Signal flags / missing security headers populate.
+4. Hit **Copy digest for Claude**, paste into a scratch buffer — it should be a few KB, not megabytes.
+
+✅ Pass = a compact, readable recon map built with zero clicks, and a paste that won't choke a chat.
 
 ## Phase 1 — capture works
 1. On the **Capture** tab, reload the page.

@@ -3,6 +3,9 @@ let selectedId = null;
 let idSeq = 0;
 let lastSchema = null;
 
+const MAX_RAW = 1000;        // ring-buffer cap on raw entries kept in the panel
+let digest = newDigest();
+
 const $ = (s) => document.querySelector(s);
 const listEl = $("#list");
 const detailEl = $("#detail");
@@ -47,6 +50,7 @@ chrome.devtools.network.onRequestFinished.addListener((har) => {
     url,
     status: res.status,
     reqHeaders: req.headers || [],
+    resHeaders: res.headers || [],
     reqBody,
     reqMime,
     resMime,
@@ -57,9 +61,14 @@ chrome.devtools.network.onRequestFinished.addListener((har) => {
     ts: Date.now(),
   };
   entries.push(entry);
+  if (entries.length > MAX_RAW) entries.shift();
+  ingestRequest(entry);
 
   har.getContent((content) => {
     entry.resBody = content || null;
+    ingestResponse(entry);
+    scheduleDigest();
+    maybeAutoSave();
     if (entry.id === selectedId) renderDetail(entry);
   });
 
@@ -277,18 +286,19 @@ function exportEntry(e) {
   };
 }
 
-function downloadText(text, base) {
-  const blob = new Blob([text], { type: "application/json" });
+function downloadText(text, base, ext, mime) {
+  ext = ext || "json";
+  const blob = new Blob([text], { type: mime || "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `${base}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  a.download = `${base}-${new Date().toISOString().replace(/[:.]/g, "-")}.${ext}`;
   a.click();
   URL.revokeObjectURL(a.href);
 }
 
-function copyOrSave(text, btn, base) {
+function copyOrSave(text, btn, base, ext, mime) {
   if (text.length > CLIP_MAX) {
-    downloadText(text, base);
+    downloadText(text, base, ext, mime);
     if (btn) { const t = btn.textContent; btn.textContent = `too big (${Math.round(text.length / 1024)}KB) → saved file`; setTimeout(() => (btn.textContent = t), 2500); }
     return;
   }
@@ -580,3 +590,301 @@ $("#s-delete").onclick = deleteScript;
 $("#new-script").onclick = newScript;
 $("#s-bundle").onclick = () => copyOrSave(bundleForClaude(), $("#s-bundle"), "recon-context");
 loadLib();
+
+/* ================== Passive recon digest ==================
+   Every finished request folds into a deduped attack-surface map.
+   Bodies never leave the panel — the digest is signal only, so it
+   stays a few KB and is safe to paste into a chat. */
+
+function newDigest() {
+  return {
+    totalRequests: 0,
+    firstSeen: null,
+    lastSeen: null,
+    hosts: new Set(),
+    origins: {},   // origin -> { count, secSeen:Set }
+    surface: {},   // "METHOD host/template" -> aggregate
+    gql: {},       // endpoint -> Set(op names)
+    auth: { schemes: new Set(), jwtAlgs: new Set(), jwtClaims: new Set(), csrf: false, cookie: false, bearer: false },
+    flags: {},     // signalType -> { count, examples:Set }
+    idParams: new Set(),
+  };
+}
+
+const SURFACE_CAP = 500;
+const SET_CAP = 40;
+const EX_CAP = 5;
+const DIGEST_MAX = 180000;
+
+function capAdd(set, val, max) {
+  if (set.size < (max || SET_CAP)) set.add(val);
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function templatePath(pathname) {
+  return pathname.split("/").map((seg) => {
+    if (!seg) return seg;
+    if (/^\d+$/.test(seg)) return ":id";
+    if (UUID_RE.test(seg)) return ":uuid";
+    if (/^[0-9a-f]{24,}$/i.test(seg)) return ":hex";
+    if (seg.length >= 20 && /[0-9]/.test(seg) && /[A-Za-z]/.test(seg) && /^[A-Za-z0-9_-]+$/.test(seg)) return ":token";
+    return seg;
+  }).join("/");
+}
+
+function isIdParamName(k) {
+  return /(_id$|^id$|^ids$|uuid|guid|tenant|account|acct|^user$|^org$|^oid$|^pid$|^gid$|customer|member)/i.test(k);
+}
+
+function b64urlDecode(s) {
+  s = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  try { return decodeURIComponent(escape(atob(s))); } catch { try { return atob(s); } catch { return null; } }
+}
+
+function decodeJwt(tok) {
+  const parts = tok.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const header = JSON.parse(b64urlDecode(parts[0]) || "{}");
+    const payload = JSON.parse(b64urlDecode(parts[1]) || "{}");
+    return { alg: header.alg || "?", claims: Object.keys(payload) };
+  } catch { return null; }
+}
+
+const JWT_RE = /eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g;
+
+const SIGNAL_RES = [
+  ["email", /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g],
+  ["awsAccessKey", /AKIA[0-9A-Z]{16}/g],
+  ["googleApiKey", /AIza[0-9A-Za-z_-]{35}/g],
+  ["privateKey", /-----BEGIN [A-Z ]*PRIVATE KEY-----/g],
+  ["s3Url", /(?:[a-z0-9.-]+\.s3[.-][a-z0-9-]*\.amazonaws\.com|s3:\/\/)/gi],
+  ["internalIp", /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/g],
+  ["stackTrace", /(?:Traceback \(most recent call last\)|Exception in thread|\bat [\w.$]+\([\w.]+\.(?:java|kt|rb|py|php):\d+\)|System\.[A-Za-z.]+Exception)/g],
+  ["secretKeyName", /"(?:api[_-]?key|secret|client[_-]?secret|access[_-]?token|refresh[_-]?token|password|passwd|pwd)"\s*:/gi],
+];
+
+const SEC_HEADERS = ["content-security-policy", "strict-transport-security", "x-content-type-options", "x-frame-options", "referrer-policy", "permissions-policy"];
+
+function headerVal(arr, name) {
+  const h = (arr || []).find((x) => x.name.toLowerCase() === name);
+  return h ? h.value : null;
+}
+
+function shortLoc(method, host, tpl) {
+  return `${method} ${host}${tpl}`;
+}
+
+function addFlag(type, loc) {
+  const f = digest.flags[type] || (digest.flags[type] = { count: 0, examples: new Set() });
+  f.count++;
+  capAdd(f.examples, loc, EX_CAP);
+}
+
+function ingestRequest(e) {
+  digest.totalRequests++;
+  const now = e.ts || Date.now();
+  if (!digest.firstSeen) digest.firstSeen = now;
+  digest.lastSeen = now;
+
+  let u;
+  try { u = new URL(e.url); } catch { return; }
+  const host = u.host;
+  const origin = u.origin;
+  digest.hosts.add(host);
+  const o = digest.origins[origin] || (digest.origins[origin] = { count: 0, secSeen: new Set() });
+  o.count++;
+
+  const tpl = templatePath(u.pathname);
+  const key = e.method + " " + host + tpl;
+  let s = digest.surface[key];
+  if (!s) {
+    if (Object.keys(digest.surface).length >= SURFACE_CAP) { digest._surfaceTruncated = true; }
+    else s = digest.surface[key] = { method: e.method, host, template: tpl, count: 0, statuses: new Set(), queryKeys: new Set(), bodyKeys: new Set(), idParams: new Set(), gqlOps: new Set(), hasPathId: tpl !== u.pathname };
+  }
+  if (s) {
+    s.count++;
+    if (e.status) s.statuses.add(e.status);
+    u.searchParams.forEach((val, k) => {
+      capAdd(s.queryKeys, k);
+      if (isIdParamName(k) || /^\d+$/.test(val)) { s.idParams.add(k); capAdd(digest.idParams, shortLoc(e.method, host, tpl) + "?" + k); }
+    });
+    const jb = parseMaybeJson(e.reqBody);
+    if (jb && typeof jb === "object" && !Array.isArray(jb)) {
+      for (const k of Object.keys(jb)) {
+        capAdd(s.bodyKeys, k);
+        if (isIdParamName(k)) { s.idParams.add(k); capAdd(digest.idParams, shortLoc(e.method, host, tpl) + " {" + k + "}"); }
+      }
+    }
+    if (e.gqlOp) {
+      s.gqlOps.add(e.gqlOp);
+      const ep = digest.gql[e.url.split("?")[0]] || (digest.gql[e.url.split("?")[0]] = new Set());
+      capAdd(ep, e.gqlOp, 60);
+    }
+  }
+
+  const auth = headerVal(e.reqHeaders, "authorization");
+  if (auth) {
+    const scheme = auth.split(" ")[0];
+    digest.auth.schemes.add(scheme);
+    if (/^bearer$/i.test(scheme)) {
+      digest.auth.bearer = true;
+      const m = auth.match(JWT_RE);
+      if (m) { const j = decodeJwt(m[0]); if (j) { digest.auth.jwtAlgs.add(j.alg); j.claims.forEach((c) => capAdd(digest.auth.jwtClaims, c)); } }
+    }
+  }
+  if (headerVal(e.reqHeaders, "x-csrf-token")) { digest.auth.csrf = true; digest.auth.schemes.add("csrf"); }
+  if (headerVal(e.reqHeaders, "cookie")) { digest.auth.cookie = true; }
+
+  for (const hh of e.resHeaders || []) {
+    const n = hh.name.toLowerCase();
+    if (SEC_HEADERS.includes(n)) o.secSeen.add(n);
+  }
+  const acao = headerVal(e.resHeaders, "access-control-allow-origin");
+  if (acao === "*") addFlag("corsWildcard", shortLoc(e.method, host, tpl));
+}
+
+function ingestResponse(e) {
+  const text = e.resBody;
+  if (!text || typeof text !== "string") return;
+  let host = "", tpl = "";
+  try { const u = new URL(e.url); host = u.host; tpl = templatePath(u.pathname); } catch {}
+  const loc = shortLoc(e.method, host, tpl);
+  const sample = text.slice(0, 200000);
+  for (const [type, re] of SIGNAL_RES) {
+    re.lastIndex = 0;
+    if (re.test(sample)) addFlag(type, loc);
+  }
+  JWT_RE.lastIndex = 0;
+  const jm = sample.match(JWT_RE);
+  if (jm) { addFlag("jwtInBody", loc); const j = decodeJwt(jm[0]); if (j) { digest.auth.jwtAlgs.add(j.alg); j.claims.forEach((c) => capAdd(digest.auth.jwtClaims, c)); } }
+}
+
+function surfaceScore(s) {
+  return (s.idParams.size || s.hasPathId ? 100 : 0) + (s.method !== "GET" ? 10 : 0) + Math.min(9, s.count);
+}
+
+function fmtTs(t) {
+  return t ? new Date(t).toISOString().replace("T", " ").slice(0, 19) : "—";
+}
+
+const DIGEST_PREAMBLE =
+`Passive recon digest of a site I'm AUTHORIZED to test. This is a deduped map of the attack surface — endpoint templates (IDs collapsed to :id/:uuid), observed params, and signal flags. It is NOT raw request/response bodies. From this, identify and RANK by likelihood x impact:
+- IDOR/BOLA: id-bearing endpoints (marked *), tenant-local or sequential IDs — which to swap and how.
+- Broken auth / authz: JWT alg + claims, endpoints that should require authz.
+- Sensitive data exposure: flagged signals (emails, keys, internal IPs, stack traces).
+- Risky CORS (corsWildcard) and missing security headers.
+- Undocumented / high-value operations (GraphQL mutations, admin-looking paths).
+For each candidate give: the endpoint, why it's suspicious, and the exact request to try. Ask me to pull the full body from the panel for anything you need to see in detail.`;
+
+function buildDigest() {
+  const hosts = [...digest.hosts];
+  const surf = Object.values(digest.surface).sort((a, b) => surfaceScore(b) - surfaceScore(a) || b.count - a.count);
+  const L = [];
+  L.push(DIGEST_PREAMBLE, "", "# Recon digest");
+  L.push(`Hosts: ${hosts.join(", ") || "—"}`);
+  L.push(`Requests: ${digest.totalRequests} | Unique endpoints: ${surf.length} | Window: ${fmtTs(digest.firstSeen)} -> ${fmtTs(digest.lastSeen)}`);
+  L.push("");
+  L.push("## Attack surface (deduped, IDs collapsed)");
+  L.push("`*` = carries an ID (IDOR/BOLA candidate). x = times seen. [] = statuses.");
+  L.push("");
+  const cap = 200;
+  for (const s of surf.slice(0, cap)) {
+    const mark = (s.idParams.size || s.hasPathId) ? "* " : "";
+    const p = [];
+    if (s.queryKeys.size) p.push("q: " + [...s.queryKeys].join(","));
+    if (s.bodyKeys.size) p.push("body: " + [...s.bodyKeys].join(","));
+    if (s.gqlOps.size) p.push("gql: " + [...s.gqlOps].join(","));
+    L.push(`- ${mark}\`${s.method} ${s.host}${s.template}\` x${s.count} [${[...s.statuses].join(",")}]${p.length ? " -- " + p.join(" | ") : ""}`);
+  }
+  if (surf.length > cap || digest._surfaceTruncated) L.push(`- ...more endpoints truncated. Use Save digest or the Capture tab for the full set.`);
+
+  const gqlEndpoints = Object.keys(digest.gql);
+  if (gqlEndpoints.length) {
+    L.push("", "## GraphQL");
+    for (const ep of gqlEndpoints) L.push(`- ${ep} -- ops: ${[...digest.gql[ep]].join(", ")}`);
+    L.push("  (Run Introspect on the Capture tab to dump the full schema.)");
+  }
+
+  L.push("", "## Auth surface");
+  L.push(`- Schemes: ${[...digest.auth.schemes].join(", ") || "none observed"}`);
+  L.push(`- Cookie: ${digest.auth.cookie ? "yes" : "no"} | CSRF header: ${digest.auth.csrf ? "yes" : "no"} | Bearer: ${digest.auth.bearer ? "yes" : "no"}`);
+  if (digest.auth.jwtAlgs.size) L.push(`- JWT alg: ${[...digest.auth.jwtAlgs].join(", ")} | claims: ${[...digest.auth.jwtClaims].join(", ")}`);
+
+  const flagTypes = Object.keys(digest.flags);
+  if (flagTypes.length) {
+    L.push("", "## Signal flags (value redacted; location = endpoint)");
+    for (const t of flagTypes) { const f = digest.flags[t]; L.push(`- ${t} x${f.count} -- e.g. ${[...f.examples].join(" ; ")}`); }
+  }
+
+  const missLines = [];
+  for (const origin of Object.keys(digest.origins)) {
+    const seen = digest.origins[origin].secSeen;
+    const missing = SEC_HEADERS.filter((h) => !seen.has(h));
+    if (missing.length) missLines.push(`- ${origin}: ${missing.join(", ")}`);
+  }
+  if (missLines.length) { L.push("", "## Security headers never observed (per origin)"); L.push(...missLines); }
+
+  if (digest.idParams.size) {
+    L.push("", "## ID-bearing params (IDOR targets)");
+    L.push("- " + [...digest.idParams].join("\n- "));
+  }
+
+  let out = L.join("\n");
+  if (out.length > DIGEST_MAX) out = out.slice(0, DIGEST_MAX) + "\n\n...digest truncated at " + DIGEST_MAX + " chars. Use Save digest for the full file.";
+  return out;
+}
+
+function digestBase() {
+  const h = primaryHost();
+  return "recon-digest" + (h ? "-" + h.replace(/[^a-z0-9.-]/gi, "_") : "");
+}
+function primaryHost() {
+  let best = null, n = -1;
+  for (const origin of Object.keys(digest.origins)) {
+    if (digest.origins[origin].count > n) { n = digest.origins[origin].count; best = origin; }
+  }
+  try { return best ? new URL(best).host : null; } catch { return null; }
+}
+
+/* ---------- live render (throttled) ---------- */
+let digestTimer = null, digestDirty = false;
+function scheduleDigest() {
+  digestDirty = true;
+  if (digestTimer) return;
+  digestTimer = setTimeout(() => { digestTimer = null; if (digestDirty) { digestDirty = false; renderDigest(); } }, 500);
+}
+function renderDigest() {
+  const req = $("#dg-req"), ep = $("#dg-ep"), out = $("#digest-out");
+  if (req) req.textContent = digest.totalRequests;
+  if (ep) ep.textContent = Object.keys(digest.surface).length;
+  if (out && digest.totalRequests) out.textContent = buildDigest();
+}
+
+/* ---------- auto-save (debounced, off Downloads) ---------- */
+let lastAutoSaveCount = 0, lastAutoSaveTs = 0;
+function maybeAutoSave() {
+  const cb = $("#dg-autosave");
+  if (!cb || !cb.checked) return;
+  const now = Date.now();
+  if (digest.totalRequests - lastAutoSaveCount >= 150 && now - lastAutoSaveTs >= 60000) {
+    lastAutoSaveCount = digest.totalRequests;
+    lastAutoSaveTs = now;
+    downloadText(buildDigest(), digestBase(), "md", "text/markdown");
+  }
+}
+
+/* ---------- digest view bindings ---------- */
+$("#dg-copy").onclick = () => copyOrSave(buildDigest(), $("#dg-copy"), digestBase(), "md", "text/markdown");
+$("#dg-save").onclick = () => downloadText(buildDigest(), digestBase(), "md", "text/markdown");
+$("#dg-clear").onclick = () => {
+  digest = newDigest();
+  entries.length = 0;
+  selectedId = null;
+  lastAutoSaveCount = 0;
+  render();
+  detailEl.innerHTML = '<div class="empty">Select a request.</div>';
+  renderDigest();
+  $("#digest-out").innerHTML = '<span class="muted">Cleared. Browse to rebuild the digest.</span>';
+};
