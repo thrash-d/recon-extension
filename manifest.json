@@ -5,5 +5,11 @@
   "description": "Passive recon digest, session-riding traffic capture, GraphQL introspection, request replay, and scripted automation for authorized security testing and admin-console work.",
   "devtools_page": "devtools.html",
   "permissions": ["clipboardWrite", "storage"],
-  "minimum_chrome_version": "116"
+  "minimum_chrome_version": "116",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "recon-console@thrash-d",
+      "strict_min_version": "116.0"
+    }
+  }
 }

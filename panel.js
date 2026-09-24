@@ -6,6 +6,12 @@ let lastSchema = null;
 const MAX_RAW = 1000;        // ring-buffer cap on raw entries kept in the panel
 let digest = newDigest();
 
+// Callback-style storage wrappers. chrome.storage returns a Promise in Chrome
+// MV3 but is callback-only under Firefox's chrome.* alias, so we normalize to
+// callbacks (which both browsers honor) and wrap them once here.
+const storageGet = (keys) => new Promise((res) => chrome.storage.local.get(keys, res));
+const storageSet = (obj) => new Promise((res) => chrome.storage.local.set(obj, res));
+
 const $ = (s) => document.querySelector(s);
 const listEl = $("#list");
 const detailEl = $("#detail");
@@ -913,7 +919,7 @@ async function pickSaveDir() {
     const h = await window.showDirectoryPicker({ mode: "readwrite", id: "recon-digest" });
     dirHandle = h;
     await idbSet("dirHandle", h);
-    await chrome.storage.local.set({ recon_dir_name: h.name });
+    await storageSet({ recon_dir_name: h.name });
     setFolderLabel("Folder: " + h.name);
   } catch (e) {
     if (e && e.name !== "AbortError") alert("Folder pick failed: " + e);
@@ -961,7 +967,7 @@ $("#dg-folder-btn").onclick = () => pickSaveDir();
     const h = await idbGet("dirHandle");
     if (h) {
       dirHandle = h;
-      const r = await chrome.storage.local.get("recon_dir_name");
+      const r = await storageGet("recon_dir_name");
       setFolderLabel("Folder: " + (r.recon_dir_name || h.name) + " (re-grant on first save)");
     }
   } catch { /* no saved handle */ }

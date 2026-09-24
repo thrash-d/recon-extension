@@ -1,4 +1,4 @@
-# Recon Console (Chrome/Brave extension)
+# Recon Console (Chrome/Firefox extension)
 
 Session-riding recon and scripted automation for authorized security testing and admin-console work. It turns the DevTools-console-paste workflow into a DevTools panel with three tabs:
 
@@ -12,12 +12,26 @@ Session-riding recon and scripted automation for authorized security testing and
 - No "Save ALL As HAR" ritual. Traffic streams into the panel live.
 - Replay runs via `inspectedWindow.eval` in the page's main world, so it rides the existing session cookie and CSRF token exactly like a console `fetch` would.
 
-## Install (Chrome or Brave)
+## Install
 
-1. Go to `chrome://extensions` (Brave: `brave://extensions`).
+**Chrome**
+
+1. Go to `chrome://extensions`.
 2. Toggle Developer mode on (top right).
 3. Click Load unpacked and select this `recon-extension` folder.
 4. Open DevTools (F12) on your target tab and pick the Recon panel.
+
+**Firefox** (temporary load, cleared on restart)
+
+1. Go to `about:debugging#/runtime/this-firefox`.
+2. Click Load Temporary Add-on and select this folder's `manifest.json`.
+3. Open DevTools (F12) on your target tab and pick the Recon panel.
+
+Firefox reads the `browser_specific_settings.gecko` block in the manifest for its
+add-on ID. One functional gap: the **Choose folder…** save target uses the File
+System Access API, which Firefox does not support, so on Firefox saves always go
+to Downloads (the button says so). Everything else — capture, digest, replay,
+scripts — is identical.
 
 No icons are bundled; the extension loads fine without them.
 
@@ -70,7 +84,7 @@ Replay executes real authenticated requests against whatever origin you point it
 - Digest signal flags record presence + location only, with the value redacted. They can false-positive (an email regex fires on any address). Confirm in the raw body via Capture before reporting.
 - JWT decode reads header + payload claims only (never verifies or stores the signature). `alg` and claim keys are the recon value.
 - auto-save is opt-in. With a chosen folder it overwrites one `recon-digest-<host>.md`; with no folder it falls back to timestamped Downloads files (Chrome can't overwrite there, so those accumulate).
-- The folder picker needs a browser with the File System Access API (Chrome/Brave/Edge). Without it, saves go to Downloads and the button says so.
+- The folder picker needs a browser with the File System Access API (Chrome/Edge). Firefox has no such API, so saves go to Downloads there and the button says so.
 - Exports cap each request/response body at 4,000 chars (truncated bodies show `_truncated` plus a char count). Replay responses cap at ~200KB in the panel view.
 - Every clipboard path is gated. Copy for Claude, Bundle context, and the per-request "Copy this request for Claude" all route through the ~300KB clipboard gate; anything larger auto-saves a `.json` file instead. On top of that, Copy for Claude caps the aggregate to the most-recent 200 requests / ~250KB (flagged with `capped` and `cappedNote`), so a normal copy is always paste-safe. Noisy APIs like YouTube's innertube hit this fast.
 - Save JSON is the full, unbounded export, deliberately not capped. Don't open it and paste the contents into a chat; multi-MB JSON crashes it. Feed the saved file to Claude as a file, not a paste.
