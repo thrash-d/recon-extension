@@ -7,8 +7,8 @@ const MAX_RAW = 1000;        // ring-buffer cap on raw entries kept in the panel
 let digest = newDigest();
 
 // Callback-style storage wrappers. chrome.storage returns a Promise in Chrome
-// MV3 but is callback-only under Firefox's chrome.* alias, so we normalize to
-// callbacks (which both browsers honor) and wrap them once here.
+// MV3 but is callback-only under Firefox's chrome.* alias. We normalize to
+// callbacks, which both browsers honor, and wrap them once here.
 const storageGet = (keys) => new Promise((res) => chrome.storage.local.get(keys, res));
 const storageSet = (obj) => new Promise((res) => chrome.storage.local.set(obj, res));
 
@@ -161,7 +161,7 @@ function renderDetail(e) {
       <textarea id="r-body" rows="5">${escapeHtml(e.reqBody || "")}</textarea></div>
     <div class="replaybar">
       <button id="r-send" class="accent">Send</button>
-      <button id="r-copy">Copy this request for Claude</button>
+      <button id="r-copy">Copy this request for LLM</button>
     </div>
     <h3>Replay response</h3>
     <pre id="r-out"><span class="muted">— not sent —</span></pre>
@@ -369,7 +369,7 @@ document.querySelectorAll(".tab").forEach((t) => {
   };
 });
 
-/* ---------- Injected in-page SDK (runs in the target's main world) ---------- */
+/* ---------- Injected in-page SDK ---------- */
 function __reconSDK(runId) {
   window.__recon = window.__recon || {};
   const slot = (window.__recon[runId] = { done: false, logs: [], error: null });
@@ -561,8 +561,8 @@ function deleteScript() {
   newScript();
 }
 
-/* ---------- Context bundle for Claude ---------- */
-function bundleForClaude() {
+/* ---------- Context bundle for LLM ---------- */
+function bundleForLLM() {
   const shown = entries.filter(passesFilter).slice(-15).map(exportEntry);
   const origin = shown[0] ? new URL(shown[0].url).origin : (lastSchema ? new URL(lastSchema.endpoint).origin : null);
   const preamble =
@@ -594,12 +594,12 @@ $("#s-run").onclick = runScript;
 $("#s-save").onclick = saveScript;
 $("#s-delete").onclick = deleteScript;
 $("#new-script").onclick = newScript;
-$("#s-bundle").onclick = () => copyOrSave(bundleForClaude(), $("#s-bundle"), "recon-context");
+$("#s-bundle").onclick = () => copyOrSave(bundleForLLM(), $("#s-bundle"), "recon-context");
 loadLib();
 
 /* ================== Passive recon digest ==================
    Every finished request folds into a deduped attack-surface map.
-   Bodies never leave the panel — the digest is signal only, so it
+   Bodies never leave the panel. The digest is signal only, so it
    stays a few KB and is safe to paste into a chat. */
 
 function newDigest() {
@@ -776,7 +776,7 @@ function fmtTs(t) {
 }
 
 const DIGEST_PREAMBLE =
-`Passive recon digest of a site I'm AUTHORIZED to test. This is a deduped map of the attack surface — endpoint templates (IDs collapsed to :id/:uuid), observed params, and signal flags. It is NOT raw request/response bodies. From this, identify and RANK by likelihood x impact:
+`Passive recon digest of a site I'm authorized to test. This is a deduped map of the attack surface — endpoint templates (IDs collapsed to :id/:uuid), observed params, and signal flags. It is not raw request/response bodies. From this, identify and RANK by likelihood x impact:
 - IDOR/BOLA: id-bearing endpoints (marked *), tenant-local or sequential IDs — which to swap and how.
 - Broken auth / authz: JWT alg + claims, endpoints that should require authz.
 - Sensitive data exposure: flagged signals (emails, keys, internal IPs, stack traces).
@@ -868,7 +868,7 @@ function renderDigest() {
   if (out && digest.totalRequests) out.textContent = buildDigest();
 }
 
-/* ---------- save target: chosen folder (File System Access) or Downloads ---------- */
+/* ---------- save target: chosen folder or Downloads ---------- */
 let dirHandle = null;
 
 function idbOpen() {
@@ -945,7 +945,7 @@ async function writeDigestFile(text, overwrite, btn) {
   if (btn) { const t = btn.textContent; btn.textContent = "saved → Downloads"; setTimeout(() => (btn.textContent = t), 1500); }
 }
 
-/* ---------- auto-save (opt-in, debounced, overwrites one file) ---------- */
+/* ---------- auto-save ---------- */
 let lastAutoSaveCount = 0, lastAutoSaveTs = 0;
 function maybeAutoSave() {
   const cb = $("#dg-autosave");

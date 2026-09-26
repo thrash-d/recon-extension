@@ -95,7 +95,7 @@
       <label class="chk"><input type="checkbox" id="onlyJson" checked> JSON/GraphQL only</label>
       <input type="text" id="filter" placeholder="filter url / operation…">
       <span class="muted"><span class="count" id="count">0</span> captured</span>
-      <button id="copyAll">Copy for Claude</button>
+      <button id="copyAll">Copy for LLM</button>
       <button id="saveAll">Save JSON</button>
       <button id="introspect" class="accent">Introspect GraphQL</button>
     </div>
@@ -107,16 +107,16 @@
 
   <div id="view-digest" class="view">
     <div id="toolbar">
-      <button id="dg-copy" class="accent">Copy digest for Claude</button>
+      <button id="dg-copy" class="accent">Copy digest for LLM</button>
       <button id="dg-save">Save digest</button>
       <button id="dg-folder-btn">Choose folder…</button>
-      <span class="muted" id="dg-folder">Downloads (default)</span>
+      <span class="muted" id="dg-folder">Default: Downloads</span>
       <button id="dg-clear">Clear</button>
       <label class="chk"><input type="checkbox" id="dg-autosave"> auto-save</label>
       <span class="muted"><span class="count" id="dg-req">0</span> reqs · <span class="count" id="dg-ep">0</span> endpoints</span>
     </div>
     <div id="digest-wrap">
-      <pre id="digest-out"><span class="muted">Browse the target with this panel open. The digest builds itself — deduped attack surface, no raw bodies. Then hit Copy digest for Claude.</span></pre>
+      <pre id="digest-out"><span class="muted">Browse the target with this panel open. The digest builds itself: deduped attack surface, no raw bodies. Then hit Copy digest for LLM.</span></pre>
     </div>
   </div>
 
@@ -146,7 +146,7 @@ recon.log('groups', groups.data.groups.nodes.length);"></textarea>
           <button id="s-run" class="accent">Run</button>
           <button id="s-save">Save</button>
           <button id="s-delete">Delete</button>
-          <button id="s-bundle">Bundle context for Claude</button>
+          <button id="s-bundle">Bundle context for LLM</button>
         </div>
 
         <h3>Run log</h3>
