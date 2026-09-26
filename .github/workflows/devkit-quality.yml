@@ -167,3 +167,13 @@ jobs:
             echo ""
             echo "Blocking: ${{ vars.DEVKIT_BLOCKING == 'true' }}. Open a failed step's log for details."
           } >> "$GITHUB_STEP_SUMMARY"
+          # One annotation per check with findings, so ci-findings.ps1 and the
+          # Actions page can show them without opening each run.
+          warn() { if [ "$2" = "failure" ]; then echo "::warning title=devkit-quality::$1 found issues"; fi; }
+          warn "Vulnerable dependencies" "${{ steps.osv.outcome }}"
+          warn "Leaked secrets" "${{ steps.gitleaks.outcome }}"
+          warn "Python bugs" "${{ steps.ruff.outcome }}"
+          warn "JavaScript lint" "${{ steps.eslint.outcome }}"
+          warn "Copied code, new this push" "${{ steps.jscpd.outcome }}"
+          warn "Repeated definitions" "${{ steps.dupes.outcome }}"
+          warn "Writing style, changed files" "${{ steps.vale.outcome }}"
