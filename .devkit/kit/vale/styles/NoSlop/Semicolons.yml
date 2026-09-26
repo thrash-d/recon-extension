@@ -1,6 +1,0 @@
-extends: occurrence
-message: "More than 2 semicolons. Use periods."
-level: warning
-scope: text
-max: 2
-token: ';'

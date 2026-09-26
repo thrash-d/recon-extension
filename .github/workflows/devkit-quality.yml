@@ -135,14 +135,14 @@ jobs:
           set -e
           list="$RUNNER_TEMP/vale-files"
           git -c core.quotePath=false diff -z --name-only --diff-filter=ACMR "$base" HEAD -- \
-            '*.md' '*.txt' '*.py' '*.js' '*.jsx' '*.ts' '*.tsx' '*.ps1' '*.psm1' \
+            '*.md' '*.txt' '*.html' '*.py' '*.js' '*.jsx' '*.ts' '*.tsx' '*.ps1' '*.psm1' \
             ':(exclude,glob).devkit/**' ':(exclude,glob)**/node_modules/**' > "$list"
           mapfile -d '' -t files < "$list"
           if [ "${#files[@]}" -eq 0 ]; then echo "No changed text or code files."; exit 0; fi
           # Vale exits 1 only for error-level alerts. Treat any warning as a finding.
           out="$RUNNER_TEMP/vale-out"
           set +e
-          vale --config .devkit/kit/vale/.vale.ini --minAlertLevel=warning --output=line "${files[@]}" > "$out"
+          vale --config .devkit/kit/vale.ini --minAlertLevel=warning --output=line "${files[@]}" > "$out"
           code=$?
           set -e
           cat "$out"
