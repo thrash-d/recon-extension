@@ -1,0 +1,4 @@
+# Local Claude context, never commit
+CLAUDE.md
+CLAUDE-HISTORY.md
+.claude/
