@@ -2,9 +2,9 @@
 
 This file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions come from `manifest.json`.
 
-## Unreleased
+## 0.4.0, 2026-09-26
 
-These changes landed after 0.3.1 without a version bump, so `manifest.json` still reads 0.3.1.
+A minor version, because Firefox support is a new feature.
 
 ### Added
 
