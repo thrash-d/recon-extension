@@ -1,9 +1,9 @@
 # Installed by dev-kit. devkit.ps1 update overwrites this file, so edit the
 # copy in dev-kit/repo-files/ instead. Per-repo settings live in .devkit/.
 #
-# Every check reports but doesn't fail the run until the repo variable
-# DEVKIT_BLOCKING is set to true (Settings > Secrets and variables > Actions >
-# Variables).
+# The secrets check always fails the run on a finding. Every other check
+# reports but doesn't fail the run until the repo variable DEVKIT_BLOCKING is
+# set to true (Settings > Secrets and variables > Actions > Variables).
 name: devkit-quality
 
 on:
@@ -56,12 +56,15 @@ jobs:
           if [ "$code" -eq 128 ]; then echo "No lockfiles found."; exit 0; fi
           exit "$code"
 
+      # Always runs to completion so the checks after it still report; the
+      # Summary step fails the job if this found anything.
       - name: Leaked secrets (gitleaks)
         id: gitleaks
-        continue-on-error: ${{ vars.DEVKIT_BLOCKING != 'true' }}
+        continue-on-error: true
         run: |
           cfg=()
-          if [ -f .devkit/gitleaks.toml ]; then cfg=(--config .devkit/gitleaks.toml); fi
+          if [ -f .devkit/kit/gitleaks.toml ] && [ -f .devkit/gitleaks.toml ]; then cfg=(--config .devkit/kit/gitleaks.toml)
+          elif [ -f .devkit/gitleaks.toml ]; then cfg=(--config .devkit/gitleaks.toml); fi
           gitleaks git --redact --no-banner "${cfg[@]}" .
 
       - name: Python bugs (ruff)
@@ -177,3 +180,9 @@ jobs:
           warn "Copied code, new this push" "${{ steps.jscpd.outcome }}"
           warn "Repeated definitions" "${{ steps.dupes.outcome }}"
           warn "Writing style, changed files" "${{ steps.vale.outcome }}"
+          # A leaked secret fails the run even when DEVKIT_BLOCKING is off. After
+          # rotating one, add its fingerprint from the log to .gitleaksignore.
+          if [ "${{ steps.gitleaks.outcome }}" = "failure" ]; then
+            echo "::error title=devkit-quality::Leaked secrets found. Rotate them, then list the fingerprints in .gitleaksignore or scrub history."
+            exit 1
+          fi

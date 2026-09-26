@@ -3,6 +3,9 @@ message: "Use sentence case for '%s'."
 level: warning
 scope: heading & ~heading.h1
 match: $sentence
+# With a Vocab active, Vale merges it into the exceptions and then flags any
+# exception written in another case, so "Run it" failed on the IT exception.
+vocab: false
 # Proper nouns and acronyms that keep their capitals mid-heading. Vale joins
 # these into one regex, so escape regex characters (C\+\+). Ambiguous everyday
 # words use their full product name (Microsoft Teams, not Teams).
