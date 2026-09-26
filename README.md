@@ -1,6 +1,6 @@
-# Recon Console (Chrome/Firefox extension)
+# Recon Console
 
-Session-riding recon and scripted automation for authorized security testing and developer work. It adds three tabs to the DevTools panel:
+A Chrome and Firefox DevTools extension for session-riding recon and scripted automation, for authorized security testing and developer work. It adds three tabs to the DevTools panel:
 
 - Capture grabs the site's own API traffic, runs GraphQL introspection, and replays or tampers requests inside the page's real session.
 - Digest is passive. Just browse, and every request folds into a deduped attack-surface map (endpoint templates with IDs collapsed, observed params, IDOR/JWT/secret/PII flags, missing security headers, GraphQL ops). A few KB of deduped map instead of MB of bodies.
@@ -15,7 +15,9 @@ Session-riding recon and scripted automation for authorized security testing and
 3. Click Load unpacked and select this `recon-extension` folder.
 4. Open DevTools (F12) on your target tab and pick the Recon panel.
 
-### Firefox (temporary, reload every restart)
+### Firefox
+
+Firefox loads it as a temporary add-on, so load it again after each browser restart.
 
 1. Go to `about:debugging#/runtime/this-firefox`.
 2. Click Load Temporary Add-on and select this folder's `manifest.json`.

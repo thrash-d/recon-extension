@@ -108,9 +108,9 @@ function render() {
     const row = document.createElement("div");
     row.className = "row" + (e.isGql ? " gql" : "") + (e.id === selectedId ? " sel" : "");
     row.innerHTML =
-      `<span class="method m-${e.method}">${e.method}</span>` +
+      `<span class="method m-${escapeHtml(e.method)}">${escapeHtml(e.method)}</span>` +
       `<span class="status">${e.status || ""}</span>` +
-      `<span class="path">${e.gqlOp ? '<span class="gqlop">' + e.gqlOp + "</span> " : ""}${escapeHtml(shortPath(e.url))}</span>`;
+      `<span class="path">${e.gqlOp ? '<span class="gqlop">' + escapeHtml(e.gqlOp) + "</span> " : ""}${escapeHtml(shortPath(e.url))}</span>`;
     row.onclick = () => { selectedId = e.id; render(); renderDetail(e); };
     listEl.appendChild(row);
   }
@@ -139,7 +139,7 @@ function renderDetail(e) {
 
   detailEl.innerHTML = `
     <div class="field"><label>Method / URL</label>
-      <pre>${e.method} ${escapeHtml(e.url)}</pre></div>
+      <pre>${escapeHtml(e.method)} ${escapeHtml(e.url)}</pre></div>
     ${flagged.length ? `<div class="field"><label>Auth-relevant headers</label>
       <pre>${escapeHtml(flagged.map((k) => k + ": " + h[k]).join("\n"))}</pre></div>` : ""}
     <h3>Request body</h3>

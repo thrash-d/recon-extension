@@ -2,6 +2,12 @@
 
 This file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions come from `manifest.json`.
 
+## 0.4.1, 2026-09-26
+
+### Fixed
+
+- The request list and detail view escape the HTTP method and GraphQL operation name. A page could put HTML in `operationName` and have it rendered, and run, inside the DevTools panel.
+
 ## 0.4.0, 2026-09-26
 
 A minor version, because Firefox support is a new feature.
