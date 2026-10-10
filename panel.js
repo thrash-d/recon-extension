@@ -6,6 +6,30 @@ let lastSchema = null;
 const MAX_RAW = 1000;        // ring-buffer cap on raw entries kept in the panel
 let digest = newDigest();
 
+let scopePatterns = [];      // compiled host regexes; empty means capture everything
+let droppedCount = 0;
+let inspectedOrigin = null;  // storage key for the per-target scope
+
+// Each comma-separated pattern is a host glob: "*" matches any run of chars,
+// so "*.target.com" also matches "target.com". Anchored, case-insensitive.
+function compileScope(text) {
+  return (text || "").split(",").map((s) => s.trim()).filter(Boolean).map((pat) => {
+    const re = pat.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*");
+    const bare = pat.startsWith("*.") ? "|^" + pat.slice(2).replace(/[.+?^${}()|[\]\\]/g, "\\$&") + "$" : "";
+    return new RegExp("^" + re + "$" + bare, "i");
+  });
+}
+
+function inScope(host) {
+  if (!scopePatterns.length) return true;
+  return scopePatterns.some((re) => re.test(host));
+}
+
+function showDropped() {
+  const el = $("#dropped");
+  if (el) el.textContent = droppedCount ? ` · ${droppedCount} out-of-scope dropped` : "";
+}
+
 // Callback-style storage wrappers. chrome.storage returns a Promise in Chrome
 // MV3 but is callback-only under Firefox's chrome.* alias. We normalize to
 // callbacks, which both browsers honor, and wrap them once here.
@@ -43,6 +67,12 @@ chrome.devtools.network.onRequestFinished.addListener((har) => {
   const req = har.request;
   const res = har.response;
   const url = req.url;
+
+  if (scopePatterns.length) {
+    let host;
+    try { host = new URL(url).host; } catch { host = null; }
+    if (!host || !inScope(host)) { droppedCount++; showDropped(); return; }
+  }
   const reqMime = (req.postData && req.postData.mimeType) || "";
   const resMime = (res.content && res.content.mimeType) || "";
   const reqBody = req.postData ? req.postData.text : null;
@@ -165,6 +195,7 @@ function renderDetail(e) {
     </div>
     <h3>Replay response</h3>
     <pre id="r-out"><span class="muted">— not sent —</span></pre>
+    <div id="r-diff"></div>
   `;
   $("#r-send").onclick = () => doReplay(e);
   $("#r-copy").onclick = () => copyOrSave(JSON.stringify(exportEntry(e), null, 2), $("#r-copy"), "recon-request");
@@ -205,14 +236,21 @@ function evalInPage(expr) {
   });
 }
 
+// Free the page-side result slot once read, so a long session of replays
+// doesn't keep growing window.__recon.
+function freeSlot(id) {
+  evalInPage(`window.__recon && delete window.__recon[${JSON.stringify(id)}]`);
+}
+
 async function runInPage(id, method, url, headers, body) {
   const call = `(${REPLAY_FN.toString()})(${JSON.stringify(id)},${JSON.stringify(method)},${JSON.stringify(url)},${JSON.stringify(headers)},${JSON.stringify(body)})`;
   await evalInPage(call);
   for (let i = 0; i < 100; i++) {
     const r = await evalInPage(`window.__recon && window.__recon[${JSON.stringify(id)}]`);
-    if (r && r.done) return r;
+    if (r && r.done) { freeSlot(id); return r; }
     await new Promise((res) => setTimeout(res, 100));
   }
+  freeSlot(id);
   return { error: "timeout after 10s" };
 }
 
@@ -226,6 +264,73 @@ async function doReplay(e) {
   const res = await runInPage(rid, $("#r-method").value, $("#r-url").value, headers, $("#r-body").value);
   if (res.error) { out.textContent = "ERROR: " + res.error; return; }
   out.textContent = "HTTP " + res.status + "\n\n" + pretty(res.body);
+  renderDiffControls(e, res);
+}
+
+// Swap an ID in Replay, send, and compare the two responses to spot what the
+// other identity could read. Diffs parsed JSON by key path; falls back to a
+// line diff for non-JSON.
+function renderDiffControls(captured, replay) {
+  const box = $("#r-diff");
+  if (!box) return;
+  box.innerHTML = `<label class="chk"><input type="checkbox" id="r-diff-on"> Diff vs captured response</label>
+    <pre id="r-diff-out" style="display:none;"></pre>`;
+  $("#r-diff-on").onchange = (ev) => {
+    const o = $("#r-diff-out");
+    if (!ev.target.checked) { o.style.display = "none"; return; }
+    o.style.display = "block";
+    o.textContent = diffResponses(captured.status, captured.resBody, replay.status, replay.body);
+  };
+}
+
+function diffResponses(statusA, bodyA, statusB, bodyB) {
+  const head = statusA === statusB
+    ? `status: ${statusA} (unchanged)`
+    : `status: ${statusA} -> ${statusB}`;
+  const ja = parseMaybeJson(bodyA), jb = parseMaybeJson(bodyB);
+  let body;
+  if (ja !== null && jb !== null) {
+    const changes = [];
+    jsonDiff(ja, jb, "", changes);
+    body = changes.length ? changes.join("\n") : "(response bodies identical)";
+  } else {
+    body = lineDiff(bodyA || "", bodyB || "");
+  }
+  return head + "\n\n" + body;
+}
+
+// Walk two parsed JSON values in parallel, recording added, removed, and
+// changed leaves by key path. "captured" is a, "replay" is b.
+function jsonDiff(a, b, path, out) {
+  const isObj = (v) => v !== null && typeof v === "object";
+  if (!isObj(a) || !isObj(b) || Array.isArray(a) !== Array.isArray(b)) {
+    if (JSON.stringify(a) !== JSON.stringify(b)) {
+      out.push(`~ ${path || "(root)"}: ${short(a)} -> ${short(b)}`);
+    }
+    return;
+  }
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) {
+    const p = path ? path + "." + k : k;
+    if (!(k in a)) out.push(`+ ${p}: ${short(b[k])}`);
+    else if (!(k in b)) out.push(`- ${p}: ${short(a[k])}`);
+    else jsonDiff(a[k], b[k], p, out);
+  }
+}
+
+function short(v) {
+  const s = JSON.stringify(v);
+  if (s === undefined) return String(v);
+  return s.length > 120 ? s.slice(0, 120) + "…" : s;
+}
+
+function lineDiff(a, b) {
+  const la = a.split("\n"), lb = b.split("\n");
+  const setB = new Set(lb), setA = new Set(la);
+  const out = [];
+  for (const l of la) if (!setB.has(l)) out.push("- " + l);
+  for (const l of lb) if (!setA.has(l)) out.push("+ " + l);
+  return out.length ? out.join("\n") : "(response bodies identical)";
 }
 
 const INTROSPECTION = `query IntrospectionQuery {
@@ -350,9 +455,34 @@ function saveJson() {
   downloadText(JSON.stringify(exportPayload(true), null, 2), "recon");
 }
 
-$("#clear").onclick = () => { entries.length = 0; selectedId = null; render(); detailEl.innerHTML = '<div class="empty">Select a request.</div>'; };
+$("#clear").onclick = () => { entries.length = 0; selectedId = null; lastSchema = null; render(); detailEl.innerHTML = '<div class="empty">Select a request.</div>'; };
 $("#onlyJson").onchange = render;
 $("#filter").oninput = render;
+
+const SCOPE_KEY = "recon_scope";
+function applyScope(text) {
+  scopePatterns = compileScope(text);
+  droppedCount = 0;
+  showDropped();
+}
+$("#scope").oninput = () => {
+  applyScope($("#scope").value);
+  if (inspectedOrigin) {
+    storageGet(SCOPE_KEY).then((r) => {
+      const map = r[SCOPE_KEY] || {};
+      map[inspectedOrigin] = $("#scope").value;
+      storageSet({ [SCOPE_KEY]: map });
+    });
+  }
+};
+(async () => {
+  inspectedOrigin = await evalInPage("location.origin");
+  if (inspectedOrigin && inspectedOrigin.__evalError) inspectedOrigin = null;
+  if (!inspectedOrigin) return;
+  const r = await storageGet(SCOPE_KEY);
+  const saved = (r[SCOPE_KEY] || {})[inspectedOrigin];
+  if (saved) { $("#scope").value = saved; applyScope(saved); }
+})();
 $("#copyAll").onclick = () => copyOrSave(JSON.stringify(exportPayload(), null, 2), $("#copyAll"), "recon");
 $("#saveAll").onclick = saveJson;
 $("#introspect").onclick = introspect;
@@ -378,9 +508,13 @@ function __reconSDK(runId) {
     params: {},
     log: function () { slot.logs.push(Array.prototype.map.call(arguments, str).join(" ")); },
     csrf: function (name) {
-      name = name || "CSRF-TOKEN";
-      const m = document.cookie.match(new RegExp("(?:^|; )" + name + "=([^;]*)"));
-      return m ? decodeURIComponent(m[1]) : null;
+      const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const names = name ? [name] : ["CSRF-TOKEN", "XSRF-TOKEN", "csrftoken", "_csrf"];
+      for (const n of names) {
+        const m = document.cookie.match(new RegExp("(?:^|; )" + esc(n) + "=([^;]*)"));
+        if (m) return decodeURIComponent(m[1]);
+      }
+      return null;
     },
     json: async function (url, opts) {
       opts = opts || {};
@@ -394,6 +528,10 @@ function __reconSDK(runId) {
       const h = Object.assign({ "Content-Type": "application/json" }, headers || {});
       const tok = this.csrf();
       if (tok && !h["X-CSRF-Token"]) h["X-CSRF-Token"] = tok;
+      else if (!tok && !h["X-CSRF-Token"] && !this._csrfWarned) {
+        this._csrfWarned = true;
+        this.log("gql: no CSRF token found in cookies (tried CSRF-TOKEN, XSRF-TOKEN, csrftoken, _csrf). A 403 may be a missing header, not an authz result. Pass recon.csrf('name') or set X-CSRF-Token in headers.");
+      }
       const r = await fetch(url, { method: "POST", credentials: "include", headers: h, body: JSON.stringify({ query, variables: variables || {} }) });
       const t = await r.text();
       let body;
@@ -455,10 +593,11 @@ async function runScript() {
       const lines = (slot.logs || []).join("\n");
       logEl.textContent = (lines || "(no output yet)") +
         (slot.done ? (slot.error ? "\n\nERROR: " + slot.error : "\n\n✓ done") : "\n…");
-      if (slot.done) return;
+      if (slot.done) { freeSlot(runId); return; }
     }
     await new Promise((r) => setTimeout(r, 100));
   }
+  freeSlot(runId);
   logEl.textContent += "\n\n(timeout after 90s — script may still be running in the page)";
 }
 
@@ -976,6 +1115,7 @@ $("#dg-clear").onclick = () => {
   digest = newDigest();
   entries.length = 0;
   selectedId = null;
+  lastSchema = null;
   lastAutoSaveCount = 0;
   render();
   detailEl.innerHTML = '<div class="empty">Select a request.</div>';

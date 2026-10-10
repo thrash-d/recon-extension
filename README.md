@@ -39,8 +39,9 @@ The chosen folder is remembered across sessions, but the browser re-asks for wri
 1. Open the Recon panel, then reload or interact with the target page. Requests stream into the left list, and GraphQL ops show their operation name in orange.
 2. Click a request to see request/response, plus auto-flagged auth headers (`X-CSRF-Token`, `Authorization`, `Content-Type`).
 3. `Introspect GraphQL` reuses a captured GraphQL request's headers to run a schema introspection and list every mutation and query with args.
-4. `Replay / tamper` edits method, URL, headers, or body and hits Send. The `Cookie` header is stripped from the editor because the browser attaches the real session cookie automatically. This is where you swap an ID and watch for broken object-level auth.
+4. `Replay / tamper` edits method, URL, headers, or body and hits Send. The `Cookie` header is stripped from the editor because the browser attaches the real session cookie automatically. After a send, `Diff vs captured response` shows the status change and, for JSON, which values differ by key path.
 5. `Copy for LLM` and `Save JSON` export the filtered set as clean JSON with a recon-analysis preamble. Paste into your LLM or save to the target's folder.
+6. The `scope` field takes in-scope host patterns such as `*.target.com, api.target.io`. When set, requests to other hosts are dropped before capture and a dropped count shows next to the counter. It's saved per inspected site, so it sticks across reloads.
 
 ## Scripts tab
 
@@ -54,7 +55,7 @@ Scripts run in the page's session via an injected `recon` helper (main-world `in
 
 - `await recon.gql(url, query, variables?, headers?)`: GraphQL POST; auto-attaches `X-CSRF-Token` from cookie; throws on non-JSON, so a 403 HTML error page doesn't crash parsing.
 - `await recon.json(url, opts?)`: fetch with `credentials:'include'`, returns `{status, ok, body}`.
-- `recon.csrf(name?)`: CSRF token from cookie.
+- `recon.csrf(name?)`: CSRF token from cookie. With no name it tries `CSRF-TOKEN`, `XSRF-TOKEN`, `csrftoken`, and `_csrf`.
 - `recon.resolveByName(arr, name, {keys?, field?, required?})`: resolve tenant-local IDs at runtime by name/title/displayName. Never hardcode IDs.
 - `recon.log(...args)`: stream to the Run log.
 - `recon.params`: object from the Parameters form.
@@ -77,5 +78,5 @@ Replay executes real authenticated requests against whatever origin you point it
 - Exports redact the values of `Cookie`, `Set-Cookie`, `Authorization`, and `X-CSRF-Token` and keep the keys, so the request shape stays visible. Never paste live session secrets into a chat.
 - Replay polls for up to 10s for async results; scripts poll for up to 90s. A slower endpoint times out in the panel even if the work finishes in the page.
 - The write-gate is a static heuristic. It can miss an obfuscated write and can flag a read, so read the script.
-- No request diffing yet (capture A against replay B). Next candidate.
+- Response diffing compares one captured response against its replay only. Diffing two arbitrary captures isn't supported.
 - No fuzzing or batching. Out of scope until offensive use is on the table.

@@ -23,6 +23,13 @@
 1. Pick a `GET` row that returned JSON (a "list"/"feed"/"me" type call).
 2. In `Replay / tamper`, hit `Send` unchanged > should return the same `200` + body. That proves the replay rides your session.
 3. Now tamper: change a query param (e.g. `count=20` > `count=5`, or a page number) > `Send` > different data back.
+4. Tick `Diff vs captured response`. The status line shows `unchanged` or `A -> B`, and for JSON the changed values list with `~`, `+`, `-` by key path. Untick to hide.
+
+## Phase 2.5: scope allowlist
+
+1. With traffic flowing, type the target's host into `scope` (e.g. `*.yourtarget.com`). New rows from other hosts (analytics, CDNs) stop appearing, and `N out-of-scope dropped` climbs next to the counter.
+2. Clear the field. Capture returns to everything.
+3. Reload the panel on the same site. The scope field repopulates from storage.
 
 ## Phase 3: first script
 `Scripts` tab > paste, set the URL to a GET you captured, `Run`:
